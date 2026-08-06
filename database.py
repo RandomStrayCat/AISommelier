@@ -18,10 +18,10 @@ def get_user_by_email(email):
         cursor = conn.cursor()
         
         # Step 1: Get the base user identity
-        cursor.execute("SELECT id, email, user_role FROM users WHERE email = ?", (email,))
+        cursor.execute("SELECT id, email, user_role, is_active FROM users WHERE email = ?", (email,))
         user_row = cursor.fetchone()
         
-        if not user_row:
+        if not user_row or user_row['is_active'] == 0:
             return None  # User not found
             
         # Convert to a dictionary so we can add to it
@@ -42,10 +42,17 @@ def get_user_by_email(email):
                 
         return user_data
 
-def search_inventory(keyword, user_role, max_price=None):
+def search_inventory(search_term: str, user_role: str, max_price: float = 9999.0):
     """
-    Searches inventory based on variety, flavor, or pairings.
+    Searches inventory based on name, varietal, region, wine type, flavor, or pairings.
     Returns a list of dictionaries for the AI Agent.
+    Args:
+        keyword: The search term for wine variety, flavor, pairing, etc. (e.g., "red", "steak", "fruity").
+        user_role: The role of the user (e.g., "B2B" or "B2C") used to calculate pricing.
+        max_price: The maximum price the user is willing to pay.
+        
+    Returns:
+        A list of dictionaries containing the matching wines.
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -62,7 +69,7 @@ def search_inventory(keyword, user_role, max_price=None):
                OR flavor_profile LIKE ? 
                OR pairings LIKE ?)
         """
-        search_term = f"%{keyword}%"
+        search_term = f"%{search_term}%"
         params = [search_term, search_term, search_term, search_term, search_term, search_term]
         
         if max_price is not None:
@@ -78,7 +85,7 @@ def search_inventory(keyword, user_role, max_price=None):
         results = [dict(row) for row in cursor.fetchall()]
         return results
 
-def save_order(user_email, total_amount, cart_items):
+def save_order(user_email: str, total_amount: float, cart_items: list[dict]):
     """
     Executes a database transaction to save the order and order items.
     cart_items expected format: [{'id': '3', 'quantity': 12, 'unit_price': 25.00}]
@@ -91,7 +98,7 @@ def save_order(user_email, total_amount, cart_items):
             # 1. Insert into orders table
             cursor.execute(
                 "INSERT INTO orders (user_email, total_amount, status, order_date) VALUES (?, ?, ?, ?)",
-                (user_email, total_amount, 'PENDING', datetime.now().isoformat())
+                (user_email, total_amount, 'CONFIRMED', datetime.now().isoformat())
             )
             order_id = cursor.lastrowid
             

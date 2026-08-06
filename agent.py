@@ -1,7 +1,8 @@
 from dotenv import load_dotenv
 from google import genai
 import textwrap
-# Import the bulletproof tools we built
+import traceback
+# Import the tools we built
 from database import search_inventory, save_order
 
 # Load environment variables from your .env file
@@ -27,7 +28,7 @@ CRITICAL RULES:
 
 
 # Define the model
-MODEL_ID = "gemini-2.5-flash"
+MODEL_ID = "gemini-3.1-flash-lite"
 
 
 def initialize_chat_session(client, user_data):
@@ -111,4 +112,7 @@ def send_message_to_sommelier(chat, user_message):
         response = chat.send_message(user_message)
         return response.text
     except Exception as e:
+        print("\n" + "="*40 + "\nFULL ERROR TRACEBACK:\n" + "="*40)
+        traceback.print_exc() 
+        print("="*40 + "\n")
         return f"I apologize, but I am having trouble accessing the cellar right now. ({str(e)})"
