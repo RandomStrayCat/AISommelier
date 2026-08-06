@@ -2,6 +2,7 @@ from dotenv import load_dotenv
 from google import genai
 import textwrap
 import traceback
+import streamlit as st
 # Import the tools we built
 from database import search_inventory, save_order
 
@@ -9,8 +10,14 @@ from database import search_inventory, save_order
 load_dotenv()
 
 # Initialize the Gemini Client
-# The client automatically looks for the GEMINI_API_KEY environment variable.
-client = genai.Client()
+# Tell Streamlit to only run this function once and hold it in memory forever
+@st.cache_resource
+def get_genai_client():
+    # Initialize your client however you were doing it before
+    return genai.Client()
+
+# Now, grab the cached client instead of creating a new one
+client = get_genai_client()
 
 # 1. Define the System Prompt (The Persona and Guardrails)
 # This is the absolute law the AI must follow.
@@ -20,7 +27,7 @@ You are the AI Sommelier for Wine Place. Your primary job is to assist customers
 CRITICAL RULES:
 1. You must ONLY recommend wines that are returned by the `search_inventory` tool. NEVER invent, guess, or hallucinate wine names, vintages, or prices.
 2. If a customer asks about stock or prices, always use the `search_inventory` tool to get real-time data. Pass the keywords one at a time to the `search_inventory` tool.
-3. Make sure to ask for clear confirmation from the user before using the `save_order` tool. When a customer explicitly confirms they want to purchase specific wines and quantities, you MUST use the `save_order` tool to process the transaction.
+3. Make sure to ask for clear confirmation from the user before using the `save_order` tool. When a customer explicitly confirms they want to purchase specific wines and quantities, you MUST use the `save_order` tool to process the transaction. Take the shipping address from the user's data.
 4. Be polite, professional, and slightly sophisticated, but keep your answers concise.
 5. If a user asks a question completely unrelated to wine, politely decline and steer the conversation back to Wine Place's catalog.
 """
@@ -47,6 +54,7 @@ def initialize_chat_session(client, user_data):
         role = user_data.get('user_role')
         email = user_data.get('email')
         
+        
         # 2. Build the base context string
         context_string = textwrap.dedent(f"""\
                         CURRENT CUSTOMER CONTEXT:
@@ -60,22 +68,26 @@ def initialize_chat_session(client, user_data):
             company = user_data.get('company_name', 'Unknown Company')
             contact = user_data.get('contact_person_name', 'Customer')
             tier = user_data.get('wholesale_tier', 'Standard')
+            address = user_data.get('shipping_address')
             
             context_string += textwrap.dedent(f"""\
                             - Company Name: {company}
                             - Contact Person: {contact}
                             - Wholesale Tier: {tier}
+                            - Shipping Address: {address}
                             """)
         elif role == 'B2C':
             first_name = user_data.get('first_name', 'Customer')
             last_name = user_data.get('last_name', '')
             style = user_data.get('preferred_wine_style', 'No preference listed')
             points = user_data.get('loyalty_points', 0)
+            address = user_data.get('shipping_address')
             
             context_string += textwrap.dedent(f"""\
                             - Name: {first_name} {last_name}
                             - Preferred Wine Style: {style}
                             - Loyalty Points Balance: {points}
+                            - Shipping Address: {address}
                             """)
 
         # 4. Add the strict tooling instruction

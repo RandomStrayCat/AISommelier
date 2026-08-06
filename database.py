@@ -1,5 +1,10 @@
 import sqlite3
+import os
+import requests
+from dotenv import load_dotenv
 from datetime import datetime
+
+load_dotenv()
 
 DB_PATH = 'wine.db'
 
@@ -29,13 +34,13 @@ def get_user_by_email(email):
         
         # Step 2: Fetch the child entity based on the role
         if user_data['user_role'] == 'B2B':
-            cursor.execute("SELECT company_name, contact_person_name, wholesale_tier FROM b2b_profiles WHERE user_id = ?", (user_data['id'],))
+            cursor.execute("SELECT company_name, contact_person_name, wholesale_tier, shipping_address FROM b2b_profiles WHERE user_id = ?", (user_data['id'],))
             profile_row = cursor.fetchone()
             if profile_row:
                 user_data.update(dict(profile_row)) # Merges the B2B columns into user_data
                 
         elif user_data['user_role'] == 'B2C':
-            cursor.execute("SELECT first_name, last_name, preferred_wine_style, loyalty_points FROM b2c_profiles WHERE user_id = ?", (user_data['id'],))
+            cursor.execute("SELECT first_name, last_name, preferred_wine_style, loyalty_points, shipping_address FROM b2c_profiles WHERE user_id = ?", (user_data['id'],))
             profile_row = cursor.fetchone()
             if profile_row:
                 user_data.update(dict(profile_row)) # Merges the B2C columns into user_data
@@ -85,11 +90,14 @@ def search_inventory(search_term: str = "", user_role: str = "B2C", max_price: f
         results = [dict(row) for row in cursor.fetchall()]
         return results
 
-def save_order(user_email: str, total_amount: float, cart_items: list[dict]):
+def save_order(user_email: str, total_amount: float, cart_items: list[dict], shipping_address: str):
     """
     Executes a database transaction to save the order and order items.
-    cart_items expected format: [{'id': '3', 'quantity': 12, 'unit_price': 25.00}]
-    Returns the generated order_id if successful.
+    Args:
+        user_email: The ID/email of the user.
+        total_amount: The total cost of the order.
+        cart_items: A list of dictionaries containing id, sku, wine name, quantity, and unit_price.
+        shipping_address: The full delivery address provided by the user.
     """
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -97,8 +105,8 @@ def save_order(user_email: str, total_amount: float, cart_items: list[dict]):
         try:
             # 1. Insert into orders table
             cursor.execute(
-                "INSERT INTO orders (user_email, total_amount, status, order_date) VALUES (?, ?, ?, ?)",
-                (user_email, total_amount, 'CONFIRMED', datetime.now().isoformat())
+                "INSERT INTO orders (user_email, total_amount, status, order_date, shipping_address) VALUES (?, ?, ?, ?, ?)",
+                (user_email, total_amount, 'CONFIRMED', datetime.now().isoformat(), shipping_address)
             )
             order_id = cursor.lastrowid
             
@@ -117,8 +125,8 @@ def save_order(user_email: str, total_amount: float, cart_items: list[dict]):
                     raise ValueError(f"Insufficient stock for item ID {item['id']}. Available: {current_stock}, Requested: {item['quantity']}")
                 
                 cursor.execute(
-                    "INSERT INTO order_items (order_id, inventory_id, quantity, unit_price) VALUES (?, ?, ?, ?)",
-                    (order_id, item['id'], item['quantity'], item['unit_price'])
+                    "INSERT INTO order_items (order_id, inventory_id, sku, name, quantity, unit_price) VALUES (?, ?, ?, ?, ?, ?)",
+                    (order_id, item['id'], item['sku'], item['name'], item['quantity'], item['unit_price'])
                 )
                 
                 # Deduct stock based on quantity purchased
@@ -127,7 +135,53 @@ def save_order(user_email: str, total_amount: float, cart_items: list[dict]):
                     (item['quantity'], item['id'])
                 )
             
-            # Transaction commits automatically if no exception is raised inside the 'with' block
+            conn.commit()
+            
+            user_info = get_user_by_email(user_email) 
+            
+            if user_info['user_role'] == 'B2B':
+                customer_name = user_info.get('contact_person_name', 'Unknown')
+                company = user_info.get('company_name', 'Unknown Company')
+            else:
+                customer_name = f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}".strip()
+                company = "N/A (Individual Consumer)"           
+            # ---------------------------------------------------------
+            # NEW: MAKE.COM WEBHOOK TRIGGER
+            # ---------------------------------------------------------
+            # 1. Grab your unique Make.com Webhook URL (we'll set this up next)
+            WEBHOOK_URL = os.getenv("MAKE_WEBHOOK_URL")
+            
+            # 2. Package the order data into a clean dictionary
+            payload = {
+                "order_id": order_id,
+                "order_date": datetime.now().isoformat(),
+                "customer": {
+                    "name": customer_name,
+                    "email": user_email,
+                    "role": user_info['user_role'],
+                    "company_name": company
+                },
+                "shipping": {
+                    "address": shipping_address,
+                    "status": "PENDING"
+                },
+                "financials": {
+                    "total_amount": total_amount
+                },
+                "items": cart_items
+            }
+            
+            # 3. Fire it off in the background
+            try:
+                # We use a quick timeout so it doesn't freeze the chat UI if Make.com is slow
+                response = requests.post(WEBHOOK_URL, json=payload, timeout=5)
+                response.raise_for_status() # Raises an error if the webhook rejects it
+                print(f"[DEBUG] Webhook sent successfully! Status: {response.status_code}")
+            except requests.exceptions.RequestException as e:
+                # We print the error but we DON'T raise it. 
+                # The DB saved successfully, so we shouldn't ruin the user's chat experience!
+                print(f"[WARNING] Order {order_id} saved, but webhook failed: {e}")
+            
             return order_id
             
         except sqlite3.Error as e:
