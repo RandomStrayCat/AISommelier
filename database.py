@@ -42,12 +42,12 @@ def get_user_by_email(email):
                 
         return user_data
 
-def search_inventory(search_term: str, user_role: str, max_price: float = 9999.0):
+def search_inventory(search_term: str = "", user_role: str = "B2C", max_price: float = 9999.0):
     """
     Searches inventory based on name, varietal, region, wine type, flavor, or pairings.
     Returns a list of dictionaries for the AI Agent.
     Args:
-        keyword: The search term for wine variety, flavor, pairing, etc. (e.g., "red", "steak", "fruity").
+        search_term: The search term for wine variety, flavor, pairing, etc. (e.g., "red", "steak", "fruity").
         user_role: The role of the user (e.g., "B2B" or "B2C") used to calculate pricing.
         max_price: The maximum price the user is willing to pay.
         
