@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 from google import genai
-
+import textwrap
 # Import the bulletproof tools we built
 from database import search_inventory, save_order
 
@@ -35,17 +35,24 @@ def initialize_chat_session(client, user_data):
     Initializes a stateful chat session dynamically tailored to the logged-in user.
     Accepts the full user_data dictionary returned from get_user_by_email().
     """
+    # Guard clause against None or empty user_data
+    if not user_data:
+        print("Error: user_data is required to initialize chat.")
+        return None
+    
     try:
         # 1. Extract base identity
+        user_id = user_data.get('id')
         role = user_data.get('user_role')
         email = user_data.get('email')
         
         # 2. Build the base context string
-        context_string = f"""
+        context_string = textwrap.dedent(f"""\
                         CURRENT CUSTOMER CONTEXT:
+                        - User ID: {user_id}
                         - Email: {email}
                         - Account Tier: {role}
-                        """
+                        """)
                                 
         # 3. Conditionally append role-specific details
         if role == 'B2B':
@@ -53,23 +60,25 @@ def initialize_chat_session(client, user_data):
             contact = user_data.get('contact_person_name', 'Customer')
             tier = user_data.get('wholesale_tier', 'Standard')
             
-            context_string += f"""- Company Name: {company}
+            context_string += textwrap.dedent(f"""\
+                            - Company Name: {company}
                             - Contact Person: {contact}
                             - Wholesale Tier: {tier}
-                            """
+                            """)
         elif role == 'B2C':
             first_name = user_data.get('first_name', 'Customer')
             last_name = user_data.get('last_name', '')
             style = user_data.get('preferred_wine_style', 'No preference listed')
             points = user_data.get('loyalty_points', 0)
             
-            context_string += f"""- Name: {first_name} {last_name}
+            context_string += textwrap.dedent(f"""\
+                            - Name: {first_name} {last_name}
                             - Preferred Wine Style: {style}
                             - Loyalty Points Balance: {points}
-                            """
+                            """)
 
         # 4. Add the strict tooling instruction
-        context_string += f"\n(IMPORTANT: You must pass '{role}' exactly as the user_role argument when calling the `search_inventory` tool)."
+        context_string += f"\n(IMPORTANT: You must pass '{role}' exactly as the user_role argument when calling the `search_inventory` tool, and use User ID {user_id} when executing the `save_order` tool.)"
 
         # 5. Stitch it all onto the base instruction
         dynamic_instruction = BASE_SYSTEM_INSTRUCTION + context_string
